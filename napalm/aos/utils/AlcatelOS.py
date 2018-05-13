@@ -52,11 +52,11 @@ class AlcatelOS(object):
     def __init__(self, hostname, username=None, password=None, timeout=60, optional_args=None):
         self.ssh = None
 
-        ''' watch out --- expect based '''
+        """ watch out --- expect based """
         self.interact = None
-        ''' watch out --- rz specific '''
+        """ watch out --- rz specific """
         self.PROMPT = '(?:lan-|tk-).*> .*'
-        ''' watch out --- expect based '''
+        """ watch out --- expect based """
 
         if optional_args is None:
             optional_args = {}
@@ -106,10 +106,10 @@ class AlcatelOS(object):
         self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         self.ssh.connect(**self.paramiko_cfg)
 
-        ''' watch out --- expect based '''
+        """ watch out --- expect based """
         self.interact = paramiko_expect.SSHClientInteraction(self.ssh)
         self.interact.expect(self.PROMPT)
-        ''' watch out --- expect based '''
+        """ watch out --- expect based """
 
     def close(self):
         """
@@ -134,26 +134,26 @@ class AlcatelOS(object):
         if not self.ssh:
             raise ConnectionException('Device not open')
 
-        ''' watch out --- expect based '''
+        """ watch out --- expect based """
         self.interact.send(command)
         self.interact.expect(self.PROMPT)
         output = self.interact.current_output_clean
-        ''' watch out --- expect based '''
+        """ watch out --- expect based """
 
-        ''' watch out --- changed and deleted'''
+        """ watch out --- changed and deleted"""
         #stdin, stdout, stderr = self.ssh.exec_command(command, timeout=timeout)
         #output = ''.join(stdout.readlines())
         #error = ''.join(stderr.readlines())
         error = ''
-        ''' watch out --- changed and deleted'''
+        """ watch out --- changed and deleted"""
         regex = re.compile('ERROR:')
         if len(regex.findall(output)) > 0:
             msg = '%s:%s' % (command, output)
             logging.debug('error:' + msg)
 
-            ''' watch out --- changed '''
+            """ watch out --- changed """
             error = output
-            ''' watch out --- changed '''
+            """ watch out --- changed """
 
             if throw_exception:
                 raise CommandErrorException(msg)
@@ -162,9 +162,9 @@ class AlcatelOS(object):
 
     def send_command(self, command, timeout=60, throw_exception=True):
         print(command, timeout, throw_exception)
-        ''' watch out --- changed '''
+        """ watch out --- changed """
         output, error = self.send_command_non_blocking(command, timeout, throw_exception)
-        ''' watch out --- changed '''
+        """ watch out --- changed """
         return output
 
     def send_command_std(self, command, timeout=60, throw_exception=True):
