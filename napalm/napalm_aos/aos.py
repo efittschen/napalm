@@ -21,15 +21,15 @@ import tempfile
 import copy
 import os
 
-import napalm_base.helpers
-import napalm_base.constants as C
+import napalm.base.helpers
+import napalm.base.constants as C
 
 from netaddr import IPAddress
-from napalm_aos.utils.AlcatelOS import *
-from napalm_aos.utils.utils import *
-from napalm_base.base import NetworkDriver
-from napalm_base.utils import py23_compat
-from napalm_base.exceptions import (
+from napalm.aos.utils.AlcatelOS import *
+from napalm.aos.utils.utils import *
+from napalm.base.base import NetworkDriver
+from napalm.base.utils import py23_compat
+from napalm.base.exceptions import (
     ConnectionException,
     MergeConfigException,
     ReplaceConfigException,
@@ -48,7 +48,7 @@ IPV6_ADDR_REGEX_3 = r"[0-9a-fA-F]{1,3}:[0-9a-fA-F]{1,3}:[0-9a-fA-F]{1,3}:[0-9a-f
 IPV6_ADDR_REGEX = "(?:{}|{}|{})".format(IPV6_ADDR_REGEX_1, IPV6_ADDR_REGEX_2, IPV6_ADDR_REGEX_3)
 MAC_REGEX = r"[a-fA-F0-9]{4}\.[a-fA-F0-9]{4}\.[a-fA-F0-9]{4}"
 
-INTERFACE_REGEX_1 = r'\d+[a-zA-Z]*\/\d+[a-zA-Z]*\/\d+[a-zA-Z]*'
+INTERFACE_REGEX_1 = r'\d+[a-zA-Z]*\/\d+[a-zA-Z]*'
 INTERFACE_REGEX_2 = r'\d+[a-zA-Z]*\/\d+[a-zA-Z]*'
 
 log_levels = {
@@ -195,7 +195,7 @@ class AOSDriver(NetworkDriver):
             diff = compare_configure(running_cfg, output, '+')
         return '\n'.join(diff)
 
-    def commit_config(self):
+    def commit_config(self, message=""):
         if self.config_replace:
             boot_dir, boot_file = self._get_boot_config_location()
             self.device.send_command('cp -rf {}/{} {}/{}'.format(self.dest_file_system,
@@ -231,18 +231,25 @@ class AOSDriver(NetworkDriver):
         system_info, chassis_info, interfaces = ({}, {}, [])
 
         show_sys = self.device.send_command('show system')
-        show_chass = self.device.send_command('show chassis chassis-id 0')
-        show_ip_inf = self.device.send_command("show ip interface | awk '{print $1}'")
 
+        ''' watch out --- changed original show chassis command does not work'''
+        show_chass = self.device.send_command('show chassis 1')
+        ''' watch out --- changed original show chassis command does not work'''
+
+        ''' watch out --- changed original "show ip interface | awk '{print $1}'" '''
+        show_ip_inf = self.device.send_command("show ip interface")
+        ''' watch out --- changed original "show ip interface | awk '{print $1}'" '''
         # Parse system info
         for line in show_sys.strip().splitlines():
-            info = line.split(':', 1)
-            key = info[0].strip()
-            value = info[1].strip()
-            if len(value) != 0 and value[len(value) - 1] == ',':
-                value = value[:len(value)-1]
+            if line:
+                info = line.split(':', 1)
+                key = info[0].strip()
+                value = info[1].strip()
+                if len(value) != 0 and value[len(value) - 1] == ',':
+                    value = value[:len(value)-1]
 
             system_info[key] = value
+
 
         # Parse uptime to second
         uptime_str = system_info["Up Time"]
@@ -263,8 +270,11 @@ class AOSDriver(NetworkDriver):
         # Parse interfaces
         interface_data = show_ip_inf.strip().splitlines()
         indices = [i for i, s in enumerate(interface_data) if '-+-' in s]
-        if indices != []:
-            interfaces = interface_data[indices[0] + 1:]
+        interfaces = []
+        if indices is not []:
+            for line in interface_data[indices[0] + 1:]:
+                interface_match = re.match("\S+", line)
+                interfaces.append(interface_match[0])
 
         return {
             'hostname': system_info['Name'],
@@ -322,7 +332,7 @@ class AOSDriver(NetworkDriver):
             interface = arp_tbl.get_column_by_name("Interface")[index]
             entry = {
                 'interface': interface,
-                'mac': napalm_base.helpers.mac(mac),
+                'mac': napalm.base.helpers.mac(mac),
                 'ip': ipaddr,
                 'age': float(0)
             }
@@ -427,7 +437,10 @@ class AOSDriver(NetworkDriver):
         iface_capability_table = AOSTable(output)
 
         for key in raw_interfaces_dict.keys():
+            print(key)
             m_iface = re.findall(INTERFACE_REGEX_1, key)
+            print(iface)
+            print(iface[0])
             iface = m_iface[0] if m_iface else re.findall(INTERFACE_REGEX_2, key)[0]
             is_up = (raw_interfaces_dict[key]['Operational Status'].strip().replace(',', '') == 'up')
             cid = iface_status_table.get_id_by_value(0, iface)  # Name column
@@ -947,8 +960,23 @@ class AOSDriver(NetworkDriver):
 
         command = 'show temperature'
         output = self.device.send_command(command)
-        temp_tbl = AOSTable(output)
+
+        temperature_groups = re.finditer("=\s([^,]+)", output)
         environment['temperature'] = dict()
+        temperature_matches = []
+        for match in temperature_groups:
+            temperature_matches.append(match)
+
+        curr_temp = temperature_matches[0].group(1)
+        thresh = temperature_matches[2].group(1)
+        danger = temperature_matches[4].group(1)
+        environment['temperature'][1] = {"temperature": float(curr_temp),
+                                               "is_alert": (curr_temp > thresh),
+                                               "is_critical": (curr_temp > danger)
+                                               }
+
+        temp_tbl = AOSTable(output)
+
         for index, chassis in enumerate(temp_tbl.get_column_by_index(0)):
             curr_temp = float(temp_tbl.get_column_by_name('Current')[index])
             danger = float(temp_tbl.get_column_by_name('Danger')[index])
@@ -959,18 +987,22 @@ class AOSDriver(NetworkDriver):
                                                    }
 
         # Fans
-        command = 'show fan'
-        output = self.device.send_command(command)
-        fans_tbl = AOSTable(output)
-        environment['fans'] = dict()
-        for index, chassis in enumerate(fans_tbl.get_column_by_index(0)):
-            fan = fans_tbl.get_column_by_name('Fan')[index]
-            locate = 'Chassis/Tray ' + chassis + ' Fan ' + fan
-            functional = fans_tbl.get_column_by_name('Functional')[index]
-            environment['fans'][locate] = {'status': (functional == 'YES')}
+        try:
+            command = 'show fan'
+            output = self.device.send_command(command)
+            fans_tbl = AOSTable(output)
+            environment['fans'] = dict()
+            for index, chassis in enumerate(fans_tbl.get_column_by_index(0)):
+                fan = fans_tbl.get_column_by_name('Fan')[index]
+                locate = 'Chassis/Tray ' + chassis + ' Fan ' + fan
+                functional = fans_tbl.get_column_by_name('Functional')[index]
+                environment['fans'][locate] = {'status': (functional == 'YES')}
+        except CommandErrorException:
+            print("ERROR: Fan status not supported on this product")
+            environment['fans'] = dict()
 
         # Power Supply
-        command = 'show powersupply'
+        command = 'show power supply'
         output = self.device.send_command(command)
 
         power_tbl = AOSTable(output)
@@ -1042,6 +1074,12 @@ class AOSDriver(NetworkDriver):
 
         if retrieve in ('startup', 'all'):
             configs['startup'] = self._get_startup_config()
+            strip_startup = []
+            for num, lines in enumerate(configs["startup"].split("H\x00\x00\x00\x00\x00")):
+                if num > 3:
+                    strip_startup.append(lines + "\n")
+            strip_startup = strip_startup[4:-3]
+            configs['startup'] = "".join(strip_startup)
 
         if retrieve in ('running', 'all'):
             configs['running'] = self._get_config_snapshot()
@@ -1061,7 +1099,8 @@ class AOSDriver(NetworkDriver):
 
     def _get_startup_config(self):
         running_dir, boot_file = self._get_boot_config_location()
-        command = 'cat {}/{}'.format(running_dir, boot_file)
+        ''' watch out --- command changed'''
+        command = 'vi {}/{}\n:q'.format(running_dir, boot_file)
         startup_cfg = self.device.send_command(command)
         return startup_cfg
 

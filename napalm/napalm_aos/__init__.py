@@ -14,7 +14,7 @@
 
 """napalm_aos package."""
 import pkg_resources
-from napalm_aos.aos import AOSDriver
+from napalm.aos.aos import AOSDriver
 
 try:
     __version__ = pkg_resources.get_distribution('napalm-aos').version
